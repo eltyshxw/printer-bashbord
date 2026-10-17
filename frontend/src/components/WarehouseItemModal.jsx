@@ -92,7 +92,7 @@ export default function WarehouseItemModal({
 
   return (
     <Modal
-      title={editing ? 'Редактировать оборудование' : 'Новая позиция'}
+      title={editing?.cartridge_managed ? 'Редактировать картридж' : editing ? 'Редактировать оборудование' : 'Новая позиция'}
       open={open}
       onOk={handleSave}
       onCancel={() => { if (!saving) onClose() }}

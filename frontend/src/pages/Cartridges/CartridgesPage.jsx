@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Alert, Button, Card, Checkbox, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Spin, Tabs, Tag, Typography, message } from 'antd'
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/api'
 import Table from '../../components/FilterableTable'
 import { printBarcodeLabel } from '../../utils/barcode'
 import { actionAllowed, cartridgeSummary, cartridgeCompatibility, cartridgeMatchesAttention, installationCandidates, CARTRIDGE_STATES, CARTRIDGE_OPERATIONS, STATE_COLORS } from '../../utils/cartridges'
 import CartridgeCompatibilityModal from '../../components/CartridgeCompatibilityModal'
+import WarehouseItemModal from '../../components/WarehouseItemModal'
 import { CartridgeResourceHistory, CartridgeTimeline, counterText, RefillDeadline, sinceText } from '../../components/CartridgeTracking'
 
 const fmtDate = (value) => value ? dayjs(value).format('DD.MM.YYYY') : '—'
@@ -232,6 +234,8 @@ export default function CartridgesPage() {
   const [installedDays, setInstalledDays] = useState(30)
   const [compatibilityOpen, setCompatibilityOpen] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [editingId, setEditingId] = useState(null)
   const [grouping, setGrouping] = useState('holder')
   const [mode, setMode] = useState(null)
   const [selected, setSelected] = useState([])
@@ -273,6 +277,17 @@ export default function CartridgesPage() {
   const print = async (item) => {
     try { await printBarcodeLabel({ path: `/cartridges/${item.item_id}`, inventoryNumber: item.inventory_number, title: 'Картридж', subtitle: item.name }) }
     catch (error) { message.error(error.message) }
+  }
+  const edit = async (item) => {
+    setEditingId(item.item_id)
+    try {
+      const response = await api.get(`/warehouse/items/${item.item_id}`)
+      if (response.data.is_archived) {
+        message.warning('Архивную карточку нельзя редактировать')
+        return
+      }
+      setEditing(response.data)
+    } catch (error) { failure(error) } finally { setEditingId(null) }
   }
   const remove = (item) => {
     Modal.confirm({
@@ -317,10 +332,14 @@ export default function CartridgesPage() {
       render: (_, row) => <RefillDeadline item={row} /> },
     { title: 'Последний ресурс, стр.', dataIndex: 'last_cycle_pages', render: (value) => value == null ? 'Неизвестно' : counterText(value) },
     { title: 'Заправок', dataIndex: 'refill_count' },
-    { title: '', key: 'actions', fixed: 'right', width: 190, render: (_, row) => <Space>
-      <Button onClick={() => print(row)}>Этикетка</Button>
-      <Button danger loading={deletingId === row.item_id} disabled={deletingId != null && deletingId !== row.item_id}
-        onClick={() => remove(row)}>Удалить</Button>
+    { title: '', key: 'actions', fixed: 'right', width: 190, align: 'right', render: (_, row) => <Space size={4}>
+      <Button size="small" type="primary" onClick={() => navigate(`/cartridges/${row.item_id}`)}>Открыть</Button>
+      <Button size="small" icon={<EditOutlined />} title={row.state === 'written_off' ? 'Списанный картридж нельзя редактировать' : 'Редактировать картридж'}
+        aria-label="Редактировать картридж" loading={editingId === row.item_id}
+        disabled={row.state === 'written_off' || editingId != null || deletingId != null} onClick={() => edit(row)} />
+      <Button size="small" danger icon={<DeleteOutlined />} title="Удалить картридж" aria-label="Удалить картридж"
+        loading={deletingId === row.item_id} disabled={editingId != null || (deletingId != null && deletingId !== row.item_id)}
+        onClick={() => remove(row)} />
     </Space> },
   ]
   const summaryColumns = [
@@ -337,6 +356,9 @@ export default function CartridgesPage() {
       {!id && <Button type="primary" onClick={() => { setInitialIds([]); setMode('create') }}>Добавить / разобрать остаток</Button>}
       <Button onClick={() => setCompatibilityOpen(true)}>Совместимость моделей</Button>
       <Button onClick={load} loading={loading}>Обновить</Button>
+      {current && <Button icon={<EditOutlined />} loading={editingId === current.item_id}
+        disabled={current.state === 'written_off' || editingId != null || deletingId != null} onClick={() => edit(current)}>Редактировать</Button>}
+      {current && <Button onClick={() => print(current)}>Этикетка</Button>}
       {current && <Button danger loading={deletingId === current.item_id} onClick={() => remove(current)}>Удалить карточку</Button>}
     </Space>
     {current && <Card style={{ marginBottom: 16 }}><Descriptions column={{ xs: 1, md: 2 }} items={[
@@ -391,5 +413,7 @@ export default function CartridgesPage() {
       onClose={() => setMode(null)} onSaved={() => { setMode(null); setSelected([]); load() }} />
     <CartridgeCompatibilityModal open={compatibilityOpen} initialModel={current?.name} items={data.items} devices={data.devices}
       onClose={() => setCompatibilityOpen(false)} onSaved={() => { setCompatibilityOpen(false); load() }} />
+    <WarehouseItemModal open={Boolean(editing)} editing={editing} branches={data.branches} departments={data.departments}
+      onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load() }} />
   </>
 }
