@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Space, Table, Tag, Typography, message } from 'antd'
+import { Button, Space, Tag, Typography, message } from 'antd'
+import Table from './FilterableTable'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { counterText, sinceText } from './CartridgeTracking'

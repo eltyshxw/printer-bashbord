@@ -313,12 +313,12 @@ export default function CartridgesPage() {
   const columns = [
     { title: 'Номер наклейки', dataIndex: 'inventory_number', render: (value, row) => <Button type="link" onClick={() => navigate(`/cartridges/${row.item_id}`)}>{value}</Button> },
     { title: 'Модель', dataIndex: 'name' },
-    { title: 'Состояние', dataIndex: 'state', render: (value, row) => <Space>
+    { title: 'Состояние', dataIndex: 'state', sortValue: (row) => CARTRIDGE_STATES[row.state], render: (value, row) => <Space>
       <Tag color={STATE_COLORS[value]}>{CARTRIDGE_STATES[value]}</Tag>
       {row.state_since && <Typography.Text type="secondary">с {sinceText(row.state_since, row.state_days)}</Typography.Text>}
       {value === 'ready' && <Button size="small" onClick={() => start('install', row.item_id)}>Установить</Button>}
     </Space> },
-    { title: 'Местонахождение / получатель', dataIndex: 'location', render: (value, row) => <div>{value}
+    { title: 'Местонахождение / получатель', dataIndex: 'location', sortValue: (row) => row.location, render: (value, row) => <div>{value}
       <div><Typography.Text type="secondary">{sinceText(row.location_since, row.location_days)}</Typography.Text></div></div> },
     { title: 'Совместимые принтеры', dataIndex: 'compatible_models', filterValue: (row) => (row.compatible_models || []).map((model) => `${model.manufacturer} ${model.model}`).join(', ') || row.compatible_printers || 'Не задано',
       render: (value, row) => value?.length ? value.map((model) => `${model.manufacturer} ${model.model}`).join(', ') : row.compatible_printers || 'Не задано' },
@@ -327,7 +327,8 @@ export default function CartridgesPage() {
     { title: 'Последнее снятие', dataIndex: 'last_removed_at', render: fmtDate },
     { title: 'Отправлен на заправку', dataIndex: 'last_refill_sent_at', render: fmtDate },
     { title: 'Возвращён', dataIndex: 'last_refill_returned_at', render: fmtDate },
-    { title: 'Срок возврата', key: 'deadline', filterValue: (row) => row.state !== 'refilling' ? '—'
+    { title: 'Срок возврата', key: 'deadline', sortValue: (row) => row.state === 'refilling' ? row.expected_return_date : null,
+      filterValue: (row) => row.state !== 'refilling' ? '—'
       : row.refill_overdue ? 'Просрочено' : row.expected_return_date ? fmtDate(row.expected_return_date) : 'Срок не задан',
       render: (_, row) => <RefillDeadline item={row} /> },
     { title: 'Последний ресурс, стр.', dataIndex: 'last_cycle_pages', render: (value) => value == null ? 'Неизвестно' : counterText(value) },
