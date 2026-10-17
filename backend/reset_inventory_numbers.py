@@ -9,6 +9,7 @@ import json
 import sqlite3
 import tarfile
 from collections import Counter
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -106,7 +107,7 @@ def run(database, root, keep, output, apply=False):
         if any(row["name"] == "inventory_number" and row["notnull"] for row in db.execute("PRAGMA table_info(devices)")):
             raise ValueError("Deploy the manual-numbering backend before applying cleanup")
         backup_path = output / "before.db"
-        with sqlite3.connect(backup_path) as backup:
+        with closing(sqlite3.connect(backup_path)) as backup, backup:
             db.backup(backup)
             if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                 raise ValueError("Backup integrity check failed")

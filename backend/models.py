@@ -290,12 +290,16 @@ class Cartridge(Base):
     last_refill_sent_at = Column(Date, nullable=True)
     last_refill_returned_at = Column(Date, nullable=True)
     refill_count = Column(Integer, nullable=False, default=0)
+    expected_return_date = Column(Date, nullable=True)
+    installation_page_counter = Column(Integer, nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
     version = Column(Integer, nullable=False, default=1)
     __mapper_args__ = {"version_id_col": version}
 
     item = relationship("WarehouseItem", back_populates="cartridge")
     employee = relationship("Employee")
     device = relationship("Device")
+    operations = relationship("CartridgeOperation", order_by="(CartridgeOperation.date, CartridgeOperation.id)")
 
 
 class CartridgeOperation(Base):
@@ -317,6 +321,21 @@ class CartridgeOperation(Base):
     contractor = Column(String(255), nullable=True)
     actor = Column(String(255), nullable=False)
     notes = Column(Text, nullable=True)
+    page_counter = Column(Integer, nullable=True)
+    pages_printed = Column(Integer, nullable=True)
+    expected_return_date = Column(Date, nullable=True)
+
+
+class CartridgeCompatibility(Base):
+    __tablename__ = "cartridge_compatibility"
+    __table_args__ = (UniqueConstraint("cartridge_key", "device_key", name="uq_cartridge_compatibility"),)
+
+    id = Column(Integer, primary_key=True)
+    cartridge_model = Column(String(255), nullable=False)
+    cartridge_key = Column(String(255), nullable=False, index=True)
+    manufacturer = Column(String(255), nullable=False)
+    model = Column(String(255), nullable=False)
+    device_key = Column(String(600), nullable=False)
 
 
 class Employee(Base):

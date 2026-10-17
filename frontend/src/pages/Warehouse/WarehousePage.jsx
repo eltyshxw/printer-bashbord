@@ -427,7 +427,7 @@ export default function WarehousePage({ archiveOnly = false }) {
         <Button size="small" icon={<HistoryOutlined />} title="История" onClick={() => setHistoryItem(row)} />
         {!row.is_archived && <Button size="small" icon={<EditOutlined />} title="Редактировать" onClick={() => { setEditing(row); setItemModal(true) }} />}
         {row.is_archived ? (
-          <Button size="small" icon={<UndoOutlined />} title="Восстановить" onClick={() => restoreItem(row.id)} />
+          !row.cartridge_deleted && <Button size="small" icon={<UndoOutlined />} title="Восстановить" onClick={() => restoreItem(row.id)} />
         ) : (
           <Popconfirm title="Переместить позицию в архив?" onConfirm={() => removeItem(row.id)} okText="В архив" cancelText="Отмена">
             <Button size="small" icon={<DeleteOutlined />} danger />
