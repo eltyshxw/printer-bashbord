@@ -8,6 +8,7 @@ def snapshot(db, floor):
     return {
         'name': floor.name, 'width': floor.width, 'height': floor.height,
         'shapes': json.loads(floor.shapes_json), 'background_opacity': floor.background_opacity,
+        'network': json.loads(floor.network_json),
         'markers': [{key: getattr(marker, key) for key in
                      ('entity_type', 'entity_id', 'x', 'y', 'rotation', 'room_id', 'locked', 'group_id')}
                     for marker in db.query(MapMarker).filter_by(floor_id=floor.id).order_by(MapMarker.id)],

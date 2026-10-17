@@ -21,6 +21,8 @@ def initialize_database():
     Base.metadata.create_all(bind=engine)
     # create_all does not add columns to existing installations.
     with engine.begin() as connection:
+        if 'network_json' not in {column['name'] for column in inspect(connection).get_columns('map_floors')}:
+            connection.execute(text("ALTER TABLE map_floors ADD COLUMN network_json TEXT NOT NULL DEFAULT '{\"nodes\":[],\"links\":[]}'"))
         marker_columns = {column["name"] for column in inspect(connection).get_columns("map_markers")}
         for name, sql_type in (("room_id", "VARCHAR(80)"), ("locked", "BOOLEAN NOT NULL DEFAULT 0"), ("group_id", "VARCHAR(80)")):
             if name not in marker_columns:

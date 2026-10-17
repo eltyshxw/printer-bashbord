@@ -14,6 +14,7 @@ from map_schemas import BuildingInput, FloorInput, FloorSave
 from models import (Cartridge, Department, Device, DeviceStatus, Employee, MapBuilding, MapFloor,
                     MapFloorVersion, MapMarker, WarehouseItem, Workplace, WorkplaceAssetAssignment, Branch)
 from map_versions import remember, snapshot
+from map_network import network_revision, read_network, update_network, ensure_floor_can_be_deleted
 import photo_storage
 from routers.auth import get_current_user
 
@@ -84,6 +85,7 @@ def _catalog(db):
             "department_name": item.department.name if item.department else None,
             "employee_name": None, "available": item.tracking_type == "asset" and not item.is_archived,
             "path": f"/warehouse/items/{item.id}", "equipment": [],
+            'ip_address': item.ip_address, 'mac_address': item.mac_address,
         }
     for assignment in assignments:
         item = records.get(("warehouse_item", assignment.item_id))
@@ -113,6 +115,7 @@ def _catalog(db):
             "branch_name": department.branch.name if department and department.branch else None,
             "department_name": department.name if department else None, "employee_name": None,
             "device_type": device.device_type.value,
+            'ip_address': device.ip_address, 'mac_address': device.mac_address,
             "available": device.status != DeviceStatus.decommissioned, "path": f"/devices/{device.id}", "equipment": [],
         }
     employee_places = {place.employee_id: place for place in workplaces if place.employee_id and not place.is_archived}
@@ -148,6 +151,16 @@ def _positions(db):
             "x": marker.x, "y": marker.y, "entity_type": marker.entity_type, "entity_id": marker.entity_id,
             "path": f"/maps?floor={floor.id}&focus={marker.entity_type}:{marker.entity_id}",
         }
+    for floor in db.query(MapFloor):
+        for node in json.loads(floor.network_json)['nodes']:
+            if not node.get('entity_type'): continue
+            result[('network', (node['entity_type'], node['entity_id']))] = {
+                'floor_id': floor.id, 'floor_name': floor.name, 'revision': floor.revision,
+                'building_name': floor.building.name, 'building_id': floor.building_id,
+                'branch_id': floor.building.branch_id, 'x': node['x'], 'y': node['y'],
+                'entity_type': 'network', 'entity_id': node['id'],
+                'path': f"/maps?floor={floor.id}&focus=network:{node['id']}",
+            }
     return result
 
 
@@ -158,6 +171,10 @@ def _position(key, positions, parents):
     parent = parents.get(key)
     if parent and parent in positions:
         return {**positions[parent], "inherited": True}
+    fallback = positions.get(('network', key))
+    if fallback: return {**fallback, 'inherited': False}
+    if parent and ('network', parent) in positions:
+        return {**positions[('network', parent)], 'inherited': True}
     return None
 
 
@@ -211,6 +228,7 @@ def _read_floor(db, floor):
         "branch_id": floor.building.branch_id, "name": floor.name, "width": floor.width, "height": floor.height,
         "revision": floor.revision, "updated_at": floor.updated_at, "updated_by": floor.updated_by,
         "shapes": json.loads(floor.shapes_json), "has_background": bool(floor.background_filename),
+        'network': json.loads(floor.network_json), 'network_revision': network_revision(db),
         "background_opacity": floor.background_opacity,
         "markers": [{"entity_type": marker.entity_type, "entity_id": marker.entity_id, "x": marker.x,
                      "y": marker.y, "rotation": marker.rotation, "room_id": marker.room_id,
@@ -245,6 +263,9 @@ def update_building(building_id: int, payload: BuildingInput, db: Session = Depe
         raise HTTPException(422, "Филиал не найден")
     if payload.branch_id != building.branch_id and db.query(MapMarker).join(MapFloor).filter(MapFloor.building_id == building.id).first():
         raise HTTPException(409, "Сначала снимите объекты с планов перед сменой филиала здания")
+    if payload.branch_id != building.branch_id and any(node.get('entity_type') for floor in db.query(MapFloor).filter_by(building_id=building.id)
+                                                     for node in json.loads(floor.network_json)['nodes']):
+        raise HTTPException(409, 'Сначала снимите привязки сетевых узлов к оборудованию перед сменой филиала здания')
     for key, value in payload.model_dump().items():
         setattr(building, key, value)
     db.commit()
@@ -279,6 +300,11 @@ def catalog(db: Session = Depends(get_db)):
              'placement_target': {'entity_type': parents[key][0], 'entity_id': parents[key][1]} if key in parents else entity.get('placement_target')}
             for key, entity in entities.items()
             if entity["available"] or entity['entity_type'] == 'employee'] + _room_catalog(db, entities)
+
+
+@router.get('/network')
+def network(db: Session = Depends(get_db)):
+    return read_network(db)
 
 
 @router.get("/locate/{entity_type}/{entity_id}")
@@ -358,6 +384,12 @@ async def save_floor(floor_id: int, document: str = Form(...), file: UploadFile 
     except ValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
     floor = _floor(db, floor_id)
+    if payload.network is None:
+        # Older clients preserve the topology, but cannot crop its nodes or bends.
+        try:
+            payload = FloorSave.model_validate({**payload.model_dump(), 'network': json.loads(floor.network_json)})
+        except ValidationError as exc:
+            raise HTTPException(422, str(exc)) from exc
     old_background = floor.background_filename
     new_background = None
     committed = False
@@ -397,6 +429,7 @@ async def save_floor(floor_id: int, document: str = Form(...), file: UploadFile 
         if not updated:
             _conflict()
         entities, _ = _catalog(db)
+        update_network(db, floor, payload.network, payload.network_revision, entities)
         existing = {(row.entity_type, row.entity_id): row for row in db.query(MapMarker).all()}
         desired = {(row.entity_type, row.entity_id) for row in payload.markers}
         transfers = {}
@@ -459,6 +492,7 @@ def delete_floor(floor_id: int, revision: int = Query(ge=1), db: Session = Depen
     # Acquire the write transaction and check the editor's version before removing markers.
     if not db.query(MapFloor).filter(MapFloor.id == floor_id, MapFloor.revision == revision).update({MapFloor.revision: revision + 1}):
         _conflict()
+    ensure_floor_can_be_deleted(db, floor)
     db.query(MapMarker).filter(MapMarker.floor_id == floor_id).delete(synchronize_session=False)
     db.query(MapFloorVersion).filter_by(floor_id=floor_id).delete(synchronize_session=False)
     db.query(MapFloor).filter(MapFloor.id == floor_id).delete(synchronize_session=False)

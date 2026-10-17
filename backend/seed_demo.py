@@ -271,6 +271,35 @@ def populate(db, as_of: date) -> dict:
                          entity_name=f"{device.manufacturer} {device.model}", x=22 + (i % 3) * 5, y=5))
     db.add(MapMarker(floor_id=floors[0].id, entity_type="warehouse_item", entity_id=spares[3].id,
                      entity_name=spares[3].name, x=6, y=18))
+    # A documented topology for trying port pairs, cable bends and floor transitions.
+    from map_schemas import NetworkPlan
+    from models import MapNetworkState
+    def network_node(node_id, kind, name, x, y, count=2, **extra):
+        return dict(id=node_id, kind=kind, name=name, x=x, y=y, group='ДЕМО / VLAN 10',
+                    ports=[dict(id=f'p{index+1}', name=str(index+1)) for index in range(count)], **extra)
+    def cable(link_id, source, source_port, target, target_port, **extra):
+        return dict(id=link_id, source_node=source, source_port=source_port,
+                    target_node=target, target_port=target_port, cable_number=link_id.upper(),
+                    group='ДЕМО / VLAN 10', **extra)
+    panel = network_node('demo-panel', 'patch_panel', 'ДЕМО — патч-панель', 12, 17, 4)
+    for a, b in ((0, 1), (2, 3)):
+        panel['ports'][a]['paired_port_id'] = panel['ports'][b]['id']
+        panel['ports'][b]['paired_port_id'] = panel['ports'][a]['id']
+    first_network = NetworkPlan(nodes=[
+        network_node('demo-pc', 'computer', 'ДЕМО — компьютер', 4, 5, 1, entity_type='warehouse_item',entity_id=assets[0].id),
+        panel, network_node('demo-switch', 'switch', 'ДЕМО — коммутатор 1', 8, 20, 8),
+        network_node('demo-printer', 'printer', 'ДЕМО — сетевой принтер', 22, 5, 1, entity_type='device',entity_id=devices[0].id),
+        network_node('demo-ap', 'access_point', 'ДЕМО — Wi-Fi', 28, 8),
+    ], links=[
+        cable('demo-c01','demo-pc','p1','demo-panel','p1',route=[dict(x=4,y=11),dict(x=12,y=11)]),
+        cable('demo-c02','demo-panel','p2','demo-switch','p1'),
+        cable('demo-c03','demo-printer','p1','demo-switch','p2',route=[dict(x=22,y=13),dict(x=8,y=13)]),
+        cable('demo-c04','demo-switch','p3','demo-router','p1',remote_point=dict(x=14,y=22)),
+        cable('demo-c05','demo-ap','p1','demo-switch','p4'),
+    ])
+    floors[0].network_json = first_network.model_dump_json()
+    floors[1].network_json = NetworkPlan(nodes=[network_node('demo-router','router','ДЕМО — маршрутизатор',8,20,4,ip_address='192.0.2.1')]).model_dump_json()
+    db.add(MapNetworkState(id=1,revision=1))
     db.flush()
     initialize_equipment_history(db)
 

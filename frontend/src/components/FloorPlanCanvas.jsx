@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, Space, Tooltip, Typography } from 'antd'
 import { AimOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons'
 import { clamp, ENTITY_COLORS, markerColor, markerKey, moveSelection, newShapeId, pointOnPlan, roomTitle, round, shapeFromDrag, snap, snapToWall, translateElement } from '../utils/floorPlans'
+import { bounds, marqueeSelection, resizeRectangle, smartGuides, wallDistances } from '../utils/mapEditing'
 
 const itemForKey = (document, key) => key?.startsWith('s:')
   ? document.shapes.find((item) => `s:${item.id}` === key)
@@ -9,10 +10,12 @@ const itemForKey = (document, key) => key?.startsWith('s:')
 
 export default function FloorPlanCanvas({ floorId, document, onChange, editing, saving, tool, onToolChange,
   selected, selection = [], onSelect, pendingEntity, onPlaced, entities, backgroundUrl, showGrid, gridStep, focus, onOpen,
-  visibleTypes = ['workplace', 'device', 'warehouse_item', 'employee'], showLabels = true, highlightStatuses = false, wallSnap = false }) {
+  visibleTypes = ['workplace', 'device', 'warehouse_item', 'employee'], showLabels = true, highlightStatuses = false, wallSnap = false,
+  networkLayer, networkNodes = [], smartSnap = true, measurements = false, reference, onSelection }) {
   const svgRef = useRef(null)
   const gestureRef = useRef(null)
   const [gesture, setGesture] = useState(null)
+  const [measurement,setMeasurement] = useState(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 580 })
   const [view, setViewState] = useState({ x: 0, y: 0, width: document.width, height: document.height })
   const viewRef = useRef(view)
@@ -30,12 +33,13 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     if (!focus?.key) return
     const room = focus.key.startsWith('room:') ? document.shapes.find(item => item.id === focus.key.slice(5)) : null
     const marker = document.markers.find((item) => markerKey(item) === focus.key)
-    const item = room || marker
+    const node = focus.key.startsWith('network:') ? networkNodes.find(item => item.id === focus.key.slice(8) && item.floor_id === floorId) : null
+    const item = room || marker || node
     if (!item) return
     const width = Math.min(document.width, room ? room.width + 4 : 12)
     const height = Math.max(width * document.height / document.width, room ? room.height + 4 : 0)
     setView({ x: item.x + (room?.width || 0) / 2 - width / 2, y: item.y + (room?.height || 0) / 2 - height / 2, width, height })
-    onSelect(room ? `s:${room.id}` : `m:${focus.key}`)
+    if(!node) onSelect(room ? `s:${room.id}` : `m:${focus.key}`)
   }, [focus, floorId])
 
   const zoom = (factor, anchor) => {
@@ -50,7 +54,8 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     const point = svgRef.current.createSVGPoint()
     point.x = event.clientX; point.y = event.clientY
     const matrix = svgRef.current.getScreenCTM()
-    return matrix ? point.matrixTransform(matrix.inverse()) : { x: 0, y: 0 }
+    const value=matrix ? point.matrixTransform(matrix.inverse()) : { x: 0, y: 0 }
+    return {x:value.x,y:value.y}
   }
   useEffect(() => {
     const svg = svgRef.current
@@ -66,6 +71,10 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     if (event.button === 1 || tool === 'pan' || (!editing && !event.target.closest('[data-map-key]'))) {
       updateGesture({ kind: 'pan', screen: { x: event.clientX, y: event.clientY }, view: viewRef.current,
         matrix: svgRef.current.getScreenCTM().inverse() })
+    } else if (tool === 'measure') {
+      updateGesture({kind:'measure',start:world(event),end:world(event)})
+    } else if (editing && tool === 'marquee') {
+      updateGesture({kind:'marquee',start:world(event),end:world(event),additive:event.shiftKey})
     } else if (editing && pendingEntity) {
       const point = pointOnPlan(world(event), document, gridStep)
       onPlaced(pendingEntity, point)
@@ -83,10 +92,11 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     } else {
       const target = event.target.closest('[data-map-key]')
       const key = target?.getAttribute('data-map-key')
-      onSelect(key || null, { additive: editing && event.shiftKey, keep: selection.includes(key) && !event.shiftKey })
+      const resizing=target?.hasAttribute('data-resize')
+      onSelect(key || null, { additive: editing && event.shiftKey && !resizing, keep: selection.includes(key) && !event.shiftKey })
       const item = itemForKey(document, key)
-      if (key && editing && !event.shiftKey && !item?.locked) updateGesture({ kind: target.hasAttribute('data-resize') ? 'resize' : target.hasAttribute('data-end') ? 'end' : 'drag',
-        key, keys: selection.includes(key) ? selection : [key], start: world(event), end: world(event), item })
+      if (key && editing && (!event.shiftKey || resizing) && !item?.locked) updateGesture({ kind: resizing ? 'resize' : target.hasAttribute('data-end') ? 'end' : 'drag',
+        key, keys: selection.includes(key) ? selection : [key], start: world(event), end: world(event), item, handle:target.getAttribute('data-resize'),alt:event.altKey,shift:event.shiftKey })
     }
     if (gestureRef.current) svgRef.current.setPointerCapture(event.pointerId)
   }
@@ -99,31 +109,38 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
         y: current.view.y - dx * current.matrix.b - dy * current.matrix.d })
     } else {
       let end = current.kind === 'draw' ? pointOnPlan(world(event), document, gridStep) : world(event)
-      if (wallSnap && ['draw', 'end'].includes(current.kind)) end = snapToWall(end, document.shapes)
-      updateGesture({ ...current, end })
+      if (wallSnap && !event.altKey && ['draw', 'end'].includes(current.kind)) end = snapToWall(end, document.shapes)
+      updateGesture({ ...current, end,alt:event.altKey,shift:event.shiftKey })
     }
   }
   const modifiedItem = (current) => {
     const { item, end } = current
-    if (current.kind === 'resize') return { ...item,
-      width: round(clamp(snap(end.x, gridStep) - item.x, 0.5, document.width - item.x)),
-      height: round(clamp(snap(end.y, gridStep) - item.y, 0.5, document.height - item.y)) }
+    if (current.kind === 'resize') return resizeRectangle(item,current.handle || 'se',pointOnPlan(end,document,current.alt ? 0 : gridStep),document,current.shift)
     if (current.kind === 'end') return { ...item, x2: pointOnPlan(end, document, gridStep).x, y2: pointOnPlan(end, document, gridStep).y }
     return translateElement(item, { x: snap(end.x - current.start.x, gridStep), y: snap(end.y - current.start.y, gridStep) }, document)
+  }
+  const dragMovement = current => {
+    let delta={x:snap(current.end.x-current.start.x,current.alt?0:gridStep),y:snap(current.end.y-current.start.y,current.alt?0:gridStep)}
+    let guides=[]
+    if(!current.alt && smartSnap)({delta,guides}=smartGuides(document,current.keys,delta,screenUnit*6))
+    if(!guides.length && wallSnap && !current.alt && current.key.startsWith('m:') && current.keys.length===1){
+      const point=snapToWall({x:current.item.x+delta.x,y:current.item.y+delta.y},document.shapes)
+      delta={x:point.x-current.item.x,y:point.y-current.item.y}
+    }
+    return {delta,guides}
   }
   const end = (event) => {
     const current = gestureRef.current
     if (!current) return
-    if (current.kind === 'draw') {
+    if(current.kind === 'measure') setMeasurement({start:current.start,end:current.end})
+    else if(current.kind === 'marquee') {
+      const keys=marqueeSelection(document,current.start,current.end)
+      onSelection?.(current.additive?[...new Set([...selection,...keys])]:keys)
+    } else if (current.kind === 'draw') {
       const item = shapeFromDrag(current.tool, current.start, current.end, current.id)
       if (item) { onChange({ ...document, shapes: [...document.shapes, item] }); onSelect(`s:${item.id}`) }
     } else if (current.kind === 'drag') {
-      let delta = { x: snap(current.end.x - current.start.x, gridStep), y: snap(current.end.y - current.start.y, gridStep) }
-      if (wallSnap && current.key.startsWith('m:') && current.keys.length === 1) {
-        const point = snapToWall({ x: current.item.x + delta.x, y: current.item.y + delta.y }, document.shapes)
-        delta = { x: point.x - current.item.x, y: point.y - current.item.y }
-      }
-      onChange(moveSelection(document, current.keys, delta))
+      onChange(moveSelection(document, current.keys, dragMovement(current).delta))
     } else if (['resize', 'end'].includes(current.kind)) {
       const item = modifiedItem(current)
       if (item.x2 === undefined || item.x !== item.x2 || item.y !== item.y2) {
@@ -136,7 +153,7 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
   }
   let shapes = document.shapes, markers = document.markers
   if (gesture?.kind === 'drag') {
-    const preview = moveSelection(document, gesture.keys, { x: snap(gesture.end.x - gesture.start.x, gridStep), y: snap(gesture.end.y - gesture.start.y, gridStep) })
+    const preview = moveSelection(document, gesture.keys, dragMovement(gesture).delta)
     shapes = preview.shapes; markers = preview.markers
   } else if (gesture && ['resize', 'end'].includes(gesture.kind)) {
     const updated = modifiedItem(gesture)
@@ -150,12 +167,12 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
   const selectedShape = shapes.find((shape) => `s:${shape.id}` === selected)
   const renderShape = (shape) => {
     const active = selected === `s:${shape.id}` || selection.includes(`s:${shape.id}`)
-    const stroke = active ? '#1677ff' : '#475569'
+    const stroke = reference === `s:${shape.id}` ? '#d946ef' : active ? '#1677ff' : '#475569'
     let content
     if (shape.kind === 'room') content = <>
       <rect x={shape.x} y={shape.y} width={shape.width} height={shape.height} fill={shape.color} fillOpacity={0.7} stroke={stroke} strokeWidth={active ? 0.1 : 0.06} />
       {showLabels && <text x={shape.x + shape.width / 2} y={shape.y + Math.min(Math.max(0.65, screenUnit * 16), shape.height / 2)} textAnchor="middle" fontSize={Math.max(0.38, screenUnit * 12)} fill="#334155" pointerEvents="none">{shape.number && document.width / view.width < 1.5 ? `Каб. ${shape.number}` : roomTitle(shape)}</text>}
-      {editing && shape.width > 2 && shape.height > 1.5 && <text x={shape.x + shape.width / 2} y={shape.y + 1.1} textAnchor="middle" fontSize={0.27} fill="#64748b" pointerEvents="none">{shape.width} × {shape.height} м{shape.locked ? ' · 🔒' : ''}</text>}
+      {(editing || measurements) && shape.width > 2 && shape.height > 1.5 && <text x={shape.x + shape.width / 2} y={shape.y + 1.1} textAnchor="middle" fontSize={Math.max(.27,screenUnit*11)} fill="#64748b" pointerEvents="none">{shape.width} × {shape.height} м · {round(shape.width*shape.height)} м²{shape.locked ? ' · 🔒' : ''}</text>}
     </>
     else if (shape.kind === 'desk') content = <>
       <rect x={shape.x} y={shape.y} width={shape.width} height={shape.height} rx={0.1} fill={shape.color} stroke={stroke} strokeWidth={0.06} />
@@ -179,6 +196,9 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     return <g key={shape.id} data-map-key={`s:${shape.id}`} data-locked={Boolean(shape.locked)} className="floor-plan-object"><title>{shape.kind === 'room' ? roomTitle(shape) : shape.label || ({ wall: 'Стена', door: 'Дверь', desk: 'Стол (элемент плана)' }[shape.kind])}{shape.locked ? ' · Заблокирован' : ''}</title>{content}</g>
   }
   const labels = []
+  const measure=gesture?.kind==='measure'?gesture:measurement
+  const inspected=itemForKey({shapes,markers},selected)
+  const distances=measurements&&inspected?wallDistances(inspected,shapes):[]
   return <div className="floor-plan-canvas-wrap">
     <div className="floor-plan-canvas-toolbar">
       <Space size={4}>
@@ -238,10 +258,19 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
           {displayLabel && expanded && entity?.employee_name && visibleTypes.includes('employee') && <text y={labelY + Math.max(0.4, screenUnit * 14)} textAnchor="middle" fontSize={Math.max(0.29, screenUnit * 11)} fill="#475569" pointerEvents="none">{entity.employee_name}</text>}
         </g>
       })}
-      {editing && !selectedShape?.locked && ['room', 'desk'].includes(selectedShape?.kind) && <rect data-map-key={selected} data-resize="true" x={selectedShape.x + selectedShape.width - 0.16}
-        y={selectedShape.y + selectedShape.height - 0.16} width={0.32} height={0.32} fill="#1677ff" stroke="white" strokeWidth={0.05} style={{ cursor: 'nwse-resize' }} />}
+      {networkLayer?.({world,screenUnit,gridStep,interactive:!editing || tool==='select'&&!pendingEntity})}
+      {editing && !selectedShape?.locked && ['room', 'desk'].includes(selectedShape?.kind) && ['nw','n','ne','e','se','s','sw','w'].map(handle=>{
+        const x=selectedShape.x+selectedShape.width*(handle.includes('w')?0:handle.includes('e')?1:.5)
+        const y=selectedShape.y+selectedShape.height*(handle.includes('n')?0:handle.includes('s')?1:.5)
+        return <rect key={handle} data-map-key={selected} data-resize={handle} x={x-screenUnit*4} y={y-screenUnit*4} width={screenUnit*8} height={screenUnit*8} fill="#1677ff" stroke="white" strokeWidth={screenUnit} style={{cursor:`${handle}-resize`}} />
+      })}
       {editing && !selectedShape?.locked && ['wall', 'door'].includes(selectedShape?.kind) && <circle data-map-key={selected} data-end="true"
         cx={selectedShape.x2} cy={selectedShape.y2} r={0.18} fill="#1677ff" stroke="white" strokeWidth={0.05} style={{ cursor: 'move' }} />}
+      {gesture?.kind==='drag'&&dragMovement(gesture).guides.map(guide=><line data-smart-guide={guide.axis} key={guide.axis} x1={guide.axis==='x'?guide.value:0} x2={guide.axis==='x'?guide.value:document.width} y1={guide.axis==='y'?guide.value:0} y2={guide.axis==='y'?guide.value:document.height} stroke="#d946ef" strokeWidth={screenUnit} strokeDasharray={`${screenUnit*6} ${screenUnit*4}`} pointerEvents="none" />)}
+      {gesture?.kind==='marquee'&&(()=>{const box=bounds({...gesture.start,x2:gesture.end.x,y2:gesture.end.y});return <rect data-map-marquee="true" x={box.left} y={box.top} width={box.width} height={box.height} fill="#1677ff22" stroke="#1677ff" strokeWidth={screenUnit} pointerEvents="none" />})()}
+      {measure&&<g pointerEvents="none"><line x1={measure.start.x} y1={measure.start.y} x2={measure.end.x} y2={measure.end.y} stroke="#ea580c" strokeWidth={screenUnit*2} /><text x={(measure.start.x+measure.end.x)/2} y={(measure.start.y+measure.end.y)/2-screenUnit*8} fontSize={screenUnit*14} fill="#c2410c">{round(Math.hypot(measure.end.x-measure.start.x,measure.end.y-measure.start.y))} м</text></g>}
+      {distances.map(gap=><g key={gap.side} pointerEvents="none"><line x1={gap.from.x} y1={gap.from.y} x2={gap.to.x} y2={gap.to.y} stroke="#ea580c" strokeDasharray={`${screenUnit*4} ${screenUnit*3}`} strokeWidth={screenUnit} /><text x={(gap.from.x+gap.to.x)/2} y={(gap.from.y+gap.to.y)/2-screenUnit*4} fontSize={screenUnit*11} fill="#c2410c">{gap.distance} м</text></g>)}
+      {measurements&&<g pointerEvents="none">{Array.from({length:Math.floor(document.width/Math.max(1,Math.ceil(screenUnit*70)))+1},(_,i)=>i*Math.max(1,Math.ceil(screenUnit*70))).map(x=><g key={x}><line x1={x} x2={x} y1={0} y2={screenUnit*7} stroke="#64748b" strokeWidth={screenUnit} /><text x={x+screenUnit*2} y={screenUnit*18} fontSize={screenUnit*10} fill="#64748b">{x} м</text></g>)}{Array.from({length:Math.floor(document.height/Math.max(1,Math.ceil(screenUnit*70)))+1},(_,i)=>i*Math.max(1,Math.ceil(screenUnit*70))).map(y=><g key={y}><line x1={0} x2={screenUnit*7} y1={y} y2={y} stroke="#64748b" strokeWidth={screenUnit} /><text x={screenUnit*10} y={y+screenUnit*11} fontSize={screenUnit*10} fill="#64748b">{y} м</text></g>)}</g>}
     </svg>
     <div className="floor-plan-legend"><span><i style={{ background: ENTITY_COLORS.workplace }} />Рабочее место</span>
       <span><i style={{ background: ENTITY_COLORS.device }} />Печатающая техника</span><span><i style={{ background: ENTITY_COLORS.warehouse_item }} />Оборудование</span>

@@ -92,3 +92,16 @@
   .floor-plan-canvas { height: 360px; }
   .map-inspector { display: block; }
 }
+.map-network-toolbar, .map-editing-tools { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+.network-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 16px; }
+.network-port-heading { display:flex; justify-content:space-between; gap:12px; margin:12px 0; flex-wrap:wrap; }
+.network-port-list { max-height:320px; overflow:auto; }
+.network-port-row { display:flex; gap:8px; align-items:flex-start; }
+.network-port-row .ant-form-item { flex:1; margin-bottom:10px; min-width:0; }
+.network-port-row .ant-select { min-width:115px; }
+.network-inspector-ports { max-height:220px; overflow:auto; margin-bottom:12px; }
+.network-inspector-ports > div { padding:3px 0; }
+.map-template-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+.floor-plan-tool-marquee { cursor:crosshair; }
+.floor-plan-tool-measure { cursor:crosshair; }
+@media(max-width:600px) { .network-form-grid { grid-template-columns:1fr; } }

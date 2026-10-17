@@ -492,6 +492,7 @@ class MapFloor(Base):
     width = Column(Float, nullable=False, default=40)
     height = Column(Float, nullable=False, default=25)
     shapes_json = Column(Text, nullable=False, default="[]")
+    network_json = Column(Text, nullable=False, default='{"nodes":[],"links":[]}')
     background_filename = Column(String(100), nullable=True)
     background_opacity = Column(Float, nullable=False, default=0.4)
     revision = Column(Integer, nullable=False, default=1)
@@ -530,6 +531,12 @@ class MapFloorVersion(Base):
     label = Column(String(200), nullable=True)
     document_json = Column(Text, nullable=False)
     background_filename = Column(String(100), nullable=True)
+
+
+class MapNetworkState(Base):
+    __tablename__ = 'map_network_state'
+    id = Column(Integer, primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
 
 
 Index(

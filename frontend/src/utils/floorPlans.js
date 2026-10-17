@@ -34,6 +34,7 @@ export function documentFromFloor(floor) {
     name: floor.name, width: floor.width, height: floor.height,
     background_opacity: floor.background_opacity ?? 0.4, remove_background: false,
     shapes: floor.shapes, markers: floor.markers.map(({ entity, ...marker }) => marker),
+    network: floor.network || { nodes: [], links: [] }, network_revision: floor.network_revision ?? 0,
   }
 }
 
@@ -107,6 +108,7 @@ export function markerColor(marker, entity, statuses) {
 export function draftPositions(entities, document, floor, building) {
   if (!floor) return Object.values(entities)
   const markers = new Map(document.markers.map(marker => [markerKey(marker), marker]))
+  const network = new Map((document.network?.nodes || []).filter(node=>node.entity_type).map(node=>[markerKey(node),node]))
   const cache = new Map()
   const resolve = (key, seen = new Set()) => {
     if (cache.has(key)) return cache.get(key)
@@ -123,6 +125,11 @@ export function draftPositions(entities, document, floor, building) {
     else if (entity.placement_target) {
       const parent = resolve(markerKey(entity.placement_target), new Set([...seen, key]))
       if (parent) position = { ...parent, inherited: true }
+    }
+    if(!position && network.has(key)){
+      const node=network.get(key)
+      position={floor_id:floor.id,floor_name:document.name,building_id:floor.building_id,building_name:building?.name,branch_id:building?.branch_id,revision:floor.revision,
+        entity_type:'network',entity_id:node.id,x:node.x,y:node.y,inherited:false}
     }
     if (!position && !entity.placement_target && entity.position?.floor_id !== floor.id) position = entity.position || null
     cache.set(key, position)

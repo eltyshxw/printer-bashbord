@@ -5,11 +5,13 @@ import { ApartmentOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExpandOu
 import api from '../../api/api'
 import FloorPlanCanvas from '../../components/FloorPlanCanvas'
 import MapVersionsModal from '../../components/MapVersionsModal'
-import { alignSelection, bindRooms, containsPoint, copySelection, documentFromFloor, draftPositions, elementKey, ENTITY_COLORS, ENTITY_TYPES, expandedSelection, filterMapCatalog, groupSelection, historyReducer, mapSummary, MAP_TOOLS, markerKey, moveSelection, newShapeId, pasteShapes, roomAt, roomContents, roomTitle } from '../../utils/floorPlans'
+import MapEditingTools from '../../components/MapEditingTools'
+import { useMapNetwork } from '../../components/MapNetwork'
+import { bindRooms, containsPoint, copySelection, documentFromFloor, draftPositions, elementKey, ENTITY_COLORS, ENTITY_TYPES, expandedSelection, filterMapCatalog, groupSelection, historyReducer, mapSummary, MAP_TOOLS, markerKey, moveSelection, newShapeId, pasteShapes, roomAt, roomContents, roomTitle } from '../../utils/floorPlans'
 import { deleteMapDraft, readMapDraft, writeMapDraft } from '../../utils/mapDrafts'
 import './maps.css'
 
-const EMPTY_DOCUMENT = { name: '', width: 40, height: 25, background_opacity: 0.4, remove_background: false, shapes: [], markers: [] }
+const EMPTY_DOCUMENT = { name: '', width: 40, height: 25, background_opacity: 0.4, remove_background: false, shapes: [], markers: [], network: { nodes: [], links: [] }, network_revision: 0 }
 const errorText = (error) => {
   const detail = error.response?.data?.detail
   if (typeof detail === 'string') return detail
@@ -20,6 +22,7 @@ const fits = (document) => document.shapes.every((shape) => shape.x <= document.
   && (shape.x2 ?? 0) <= document.width && (shape.y2 ?? 0) <= document.height
   && (!['room', 'desk'].includes(shape.kind) || (shape.x + shape.width <= document.width && shape.y + shape.height <= document.height)))
   && document.markers.every((marker) => marker.x <= document.width && marker.y <= document.height)
+  && [...(document.network?.nodes || []),...(document.network?.links || []).flatMap(link=>[...(link.route||[]),...(link.remote_point?[link.remote_point]:[])])].every(point=>point.x<=document.width&&point.y<=document.height)
 
 function SettingsModal({ mode, building, document, branches, onClose, onSaved, onParameters }) {
   const [form] = Form.useForm()
@@ -150,6 +153,9 @@ export default function MapsPage() {
   const [branches, setBranches] = useState([])
   const [departments, setDepartments] = useState([])
   const [catalog, setCatalog] = useState([])
+  const [networkGraph,setNetworkGraph] = useState({revision:0,nodes:[],links:[]})
+  const networkRef=useRef(null)
+  const [smartSnap,setSmartSnap]=useState(true),[measurements,setMeasurements]=useState(false),[reference,setReference]=useState(null)
   const [buildingId, setBuildingId] = useState()
   const [floor, setFloor] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -209,6 +215,7 @@ export default function MapsPage() {
   const building = buildings.find((row) => row.id === buildingId)
   const commit = useCallback((next) => dispatch({ type: 'commit', document: bindRooms(next) }), [])
   const setSelected = (key, { additive = false, keep = false } = {}) => {
+    networkRef.current?.clearSelection()
     setPrimarySelected(key)
     setSelection(previous => !key ? [] : additive ? previous.includes(key) ? previous.filter(item => item !== key) : [...previous, key] : keep ? previous : [key])
     if (key) setInspectorOpen(true)
@@ -224,7 +231,7 @@ export default function MapsPage() {
       document: value.document, backgroundFile: value.backgroundFile, base_revision: value.base_revision,
     }))
     return draftQueue.current.then(() => {
-      if (draftState.current?.floorId === value.floorId && draftState.current.dirty) setDraftStatus('Черновик сохранён на этом устройстве')
+      if (draftState.current?.floorId === value.floorId && draftState.current.dirty && draftState.current.document === value.document && draftState.current.backgroundFile === value.backgroundFile) setDraftStatus('Черновик сохранён на этом устройстве')
     }).catch(() => { setDraftStatus('Не удалось сохранить черновик. Сохраните план на сервер.'); })
   }, [])
   const clearDraft = useCallback(async (floorId) => {
@@ -236,6 +243,7 @@ export default function MapsPage() {
   }, [])
   useEffect(() => {
     if (!dirty || !floor?.id) return
+    setDraftStatus('Сохранение черновика…')
     const timer = setTimeout(persistDraft, 400)
     return () => clearTimeout(timer)
   }, [dirty, document, backgroundFile, floor?.id, draftBaseRevision, persistDraft])
@@ -264,8 +272,9 @@ export default function MapsPage() {
       } })
   }, [clearDraft])
   const refreshIndex = async () => {
-    const [indexResponse, catalogResponse] = await Promise.all([api.get('/maps/buildings'), api.get('/maps/catalog')])
+    const [indexResponse, catalogResponse, networkResponse] = await Promise.all([api.get('/maps/buildings'), api.get('/maps/catalog'), api.get('/maps/network')])
     setBuildings(indexResponse.data); setCatalog(catalogResponse.data)
+    setNetworkGraph(networkResponse.data)
     return indexResponse.data
   }
   const loadFloor = useCallback(async (id, { focusKey, placeKey } = {}) => {
@@ -273,10 +282,11 @@ export default function MapsPage() {
     backgroundRequestId.current += 1
     setLoading(true); setLoadError('')
     try {
-      const [response, catalogResponse] = await Promise.all([api.get(`/maps/floors/${id}`), api.get('/maps/catalog')])
+      const [response, catalogResponse, networkResponse] = await Promise.all([api.get(`/maps/floors/${id}`), api.get('/maps/catalog'), api.get('/maps/network')])
       if (request !== requestId.current) return
       const next = response.data, nextDocument = documentFromFloor(next)
       setFloor(next); setBuildingId(next.building_id); setCatalog(catalogResponse.data)
+      setNetworkGraph(networkResponse.data);setReference(null)
       dispatch({ type: 'reset', document: nextDocument }); setSavedJSON(JSON.stringify(nextDocument))
       setSelected(null); setPendingEntity(null); setTool('select'); setEditing(false); setConflict('')
       setBackgroundFile(null); setPreviewBackground(null); setServerBackground(null); setBackgroundSize(null)
@@ -370,6 +380,11 @@ export default function MapsPage() {
         event.preventDefault(); paste()
       } else if ((event.ctrlKey || event.metaKey) && ['d', 'в'].includes(event.key.toLowerCase())) {
         event.preventDefault(); clipboard.current = copySelection(documentRef.current, selection); paste()
+      } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (selection.length || networkRef.current?.selected)) {
+        event.preventDefault();const step=event.shiftKey?1:.1
+        const delta={x:event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,y:event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0}
+        if(selection.length)commit(moveSelection(documentRef.current,selection,delta))
+        else networkRef.current?.nudge(delta)
       } else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); removeSelected() }
       else if (event.key === 'Escape') { setPendingEntity(null); setTool('select'); setSelected(null) }
     }
@@ -396,17 +411,28 @@ export default function MapsPage() {
     }
     return rows
   }, [entities, document, floor, building, departments])
-  const matches = useMemo(() => filterMapCatalog(liveCatalog, { search, type: entityType }).filter(entity => {
+  const network = useMapNetwork({document,floor,graph:networkGraph,catalog:liveCatalog,editing,saving:saving||loading,onChange:commit,
+    onDeselect:()=>{setPrimarySelected(null);setSelection([]);setPendingEntity(null);setTool('select')},onOpenInspector:()=>setInspectorOpen(true),focus,
+    onNavigate:(id,key)=>id===floor?.id?setFocus({key,at:Date.now()}):changeFloor(id,{focusKey:key})})
+  networkRef.current=network
+  const searchCatalog = useMemo(()=>[...liveCatalog,...network.nodes.map(node=>({entity_type:'network',entity_id:node.id,name:node.name,category:'Сетевой узел',inventory_number:[node.ip_address,node.hostname,node.group].filter(Boolean).join(' · '),available:!node.unavailable,
+    position:{floor_id:node.floor_id,floor_name:node.floor_name,building_name:node.building_name,entity_type:'network',entity_id:node.id}}))],[liveCatalog,network.nodes])
+  const matches = useMemo(() => filterMapCatalog(searchCatalog, { search, type: entityType }).filter(entity => {
     if (placementFilter === 'unplaced') return !entity.position && entity.available !== false
     if (placementFilter === 'archived') return entity.available === false
     if (placementFilter === 'mismatch') return Boolean(entity.placement_warning)
     if (placementFilter === 'floor') return Boolean(floor && entity.position?.floor_id === floor.id)
     return true
-  }).sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })), [liveCatalog, search, entityType, placementFilter, floor?.id])
+  }).sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })), [searchCatalog, search, entityType, placementFilter, floor?.id])
   const summary = useMemo(() => mapSummary(document, entities), [document, entities])
   const changeTool = (next) => { setTool(next); setPendingEntity(null) }
   const changeFloor = (id, options) => confirmDiscard(() => { setParams({ floor: String(id), ...(options?.focusKey ? { focus: options.focusKey } : {}) }); loadFloor(id, options) })
   const pickEntity = (entity) => {
+    if(entity.entity_type==='network'){
+      const key=`network:${entity.entity_id}`
+      if(entity.position.floor_id===floor?.id)return setFocus({key,at:Date.now()})
+      return changeFloor(entity.position.floor_id,{focusKey:key})
+    }
     if (entity.entity_type === 'room') {
       if (entity.position.floor_id === floor?.id) return setFocus({ key: `room:${entity.position.entity_id}`, at: Date.now() })
       return changeFloor(entity.position.floor_id, { focusKey: `room:${entity.position.entity_id}` })
@@ -428,6 +454,11 @@ export default function MapsPage() {
     const key = markerKey(entity)
     const current = document.markers.find((marker) => markerKey(marker) === key)
     if (current) { setFocus({ key, at: Date.now() }); setSelected(`m:${key}`); return }
+    if(entity.position?.entity_type==='network'){
+      const focusKey=`network:${entity.position.entity_id}`
+      if(entity.position.floor_id===floor?.id)return setFocus({key:focusKey,at:Date.now()})
+      return changeFloor(entity.position.floor_id,{focusKey})
+    }
     if (!editing) {
       if (entity.position) return changeFloor(entity.position.floor_id, { focusKey: `${entity.position.entity_type}:${entity.position.entity_id}` })
       message.info(floor ? 'Нажмите «Редактировать план», чтобы разместить объект' : 'Сначала создайте или выберите план этажа'); return
@@ -485,7 +516,7 @@ export default function MapsPage() {
         const image = await api.get(`/maps/floors/${floor.id}/versions/${draft.document.background_revision}/background`, { responseType: 'blob' })
         setPreviewBackground(URL.createObjectURL(image.data))
       }
-      dispatch({ type: 'commit', document: bindRooms(draft.document) })
+      dispatch({ type: 'commit', document: bindRooms({network:{nodes:[],links:[]},network_revision:floor.network_revision,...draft.document}) })
       setBackgroundFile(draft.backgroundFile || null); setDraftBaseRevision(draft.base_revision)
       setEditing(true); setRecoverableDraft(null)
       if (draft.base_revision !== floor.revision) setConflict('Черновик основан на прежней версии. Серверный план изменился; сохранение поверх новой версии будет заблокировано. Черновик остаётся на этом устройстве.')
@@ -516,7 +547,7 @@ export default function MapsPage() {
       if (value.has_background) image = (await api.get(`/maps/floors/${floorId}/versions/${revision}/background`, { responseType: 'blob' })).data
       const apply = () => confirmDiscard(() => {
         setCatalog(currentCatalog); setBackgroundFile(null); setPreviewBackground(image ? URL.createObjectURL(image) : null)
-        commit({ ...value.document, markers, background_revision: revision, remove_background: !value.has_background, version_label: `Восстановлено из версии ${revision}` })
+        commit({ ...value.document, network:value.document.network||{nodes:[],links:[]},network_revision:floor.network_revision, markers, background_revision: revision, remove_background: !value.has_background, version_label: `Восстановлено из версии ${revision}` })
         setDraftBaseRevision(floor.revision); setEditing(true); setVersionsOpen(false); setSelected(null); setConflict('')
       })
       if (transfers.length || unavailable.length) Modal.confirm({ title: 'Загрузить прежнюю версию?',
@@ -620,7 +651,7 @@ export default function MapsPage() {
           <h4>{editing ? 'Разместить на плане' : 'Найти на карте'}</h4>
           <Input.Search aria-label="Поиск объектов карты" placeholder="Сотрудник, номер, оборудование" allowClear value={search} onChange={(event) => setSearch(event.target.value)} />
           <Select aria-label="Тип объекта карты" allowClear placeholder="Все объекты" value={entityType} onChange={setEntityType}
-            style={{ width: '100%', marginTop: 8 }} options={Object.entries(ENTITY_TYPES).map(([value, label]) => ({ value, label }))} />
+            style={{ width: '100%', marginTop: 8 }} options={Object.entries({...ENTITY_TYPES,network:'Сетевые узлы'}).map(([value, label]) => ({ value, label }))} />
           <Select aria-label="Контроль размещения" allowClear placeholder="Любое размещение" value={placementFilter} onChange={setPlacementFilter} style={{ width: '100%', marginTop: 8 }} options={[
             { value: 'floor', label: 'На текущем этаже' }, { value: 'unplaced', label: 'Не размещено на карте' },
             { value: 'archived', label: 'Архивные / неактивные' }, { value: 'mismatch', label: 'Изменился филиал' },
@@ -656,8 +687,9 @@ export default function MapsPage() {
             <Checkbox checked={showLabels} onChange={event => setShowLabels(event.target.checked)}>Подписи</Checkbox>
             <Checkbox checked={highlightStatuses} onChange={event => setHighlightStatuses(event.target.checked)}>Подсветка состояний</Checkbox>
           </div>
+          {network.toolbar}
           {editing && <div className="map-drawing-toolbar">
-            <Space wrap size={4}>{Object.entries(MAP_TOOLS).map(([value, label]) => <Button key={value} disabled={saving} type={tool === value && !pendingEntity ? 'primary' : 'default'} onClick={() => changeTool(value)}>{label}</Button>)}
+            <Space wrap size={4}>{Object.entries({...MAP_TOOLS,marquee:'Выделить рамкой',measure:'Измерить расстояние'}).map(([value, label]) => <Button key={value} disabled={saving} type={tool === value && !pendingEntity ? 'primary' : 'default'} onClick={() => changeTool(value)}>{label}</Button>)}
               <Tooltip title="Отменить (Ctrl+Z)"><Button aria-label="Отменить изменение плана" icon={<UndoOutlined />} disabled={!state.past.length || saving} onClick={() => dispatch({ type: 'undo' })} /></Tooltip>
               <Tooltip title="Повторить (Ctrl+Shift+Z)"><Button aria-label="Повторить изменение плана" icon={<RedoOutlined />} disabled={!state.future.length || saving} onClick={() => dispatch({ type: 'redo' })} /></Tooltip>
             </Space>
@@ -666,10 +698,9 @@ export default function MapsPage() {
               <Tooltip title="Копируются кабинеты, столы и элементы рисунка. Оборудование и рабочие места добавляются из списка."><Button size="small" icon={<CopyOutlined />} disabled={saving || !selection.length} onClick={() => { clipboard.current = copySelection(document, selection); paste() }}>Дублировать</Button></Tooltip>
               <Button size="small" disabled={saving || selection.length < 2} onClick={() => commit(groupSelection(document, selection, newShapeId()))}>Группировать</Button>
               <Button size="small" disabled={saving || !selection.length} onClick={() => commit(groupSelection(document, expandedSelection(document, selection), null))}>Разгруппировать</Button>
-              <Button size="small" disabled={saving || selection.length < 2} onClick={() => commit(alignSelection(document, selection, 'x'))}>По левому краю</Button>
-              <Button size="small" disabled={saving || selection.length < 2} onClick={() => commit(alignSelection(document, selection, 'y'))}>По верхнему краю</Button>
               <Button size="small" danger disabled={saving || !selection.length} onClick={removeSelected}>Удалить выделенное</Button>
             </Space>
+            <MapEditingTools document={document} selection={selection} selected={selected} disabled={saving} onChange={commit} onSelection={keys=>{setSelection(keys);setPrimarySelected(keys.at(-1)||null)}} guides={smartSnap} onGuides={setSmartSnap} measurements={measurements} onMeasurements={setMeasurements} reference={reference} onReference={setReference} />
             <Space wrap><Checkbox checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)}>Сетка</Checkbox>
               <Checkbox checked={wallSnap} onChange={event => setWallSnap(event.target.checked)}>Привязка к стенам</Checkbox>
               <Select aria-label="Шаг сетки" value={gridStep} onChange={setGridStep} options={[{ value: 0, label: 'Без привязки' }, { value: 0.5, label: 'Шаг 0,5 м' }, { value: 1, label: 'Шаг 1 м' }]} />
@@ -696,15 +727,17 @@ export default function MapsPage() {
               selected={selected} selection={selection} onSelect={setSelected} pendingEntity={pendingEntity} onPlaced={placeEntity} entities={entities}
               backgroundUrl={previewBackground || serverBackground} showGrid={showGrid} gridStep={gridStep} focus={focus}
               visibleTypes={visibleTypes} showLabels={showLabels} highlightStatuses={highlightStatuses} wallSnap={wallSnap}
+              networkLayer={network.overlay} networkNodes={network.nodes} smartSnap={smartSnap} measurements={measurements} reference={selection.includes(reference)?reference:selected}
+              onSelection={keys=>{network.clearSelection();setSelection(keys);setPrimarySelected(keys.at(-1)||null);if(keys.length)setInspectorOpen(true)}}
               onOpen={(entity) => { if (entity?.path) confirmDiscard(() => navigate(entity.path)) }} />
           </Spin>
           {editing && !document.shapes.length && <Typography.Paragraph type="secondary" style={{ padding: '12px 16px' }}>Выберите «Комната», «Стена» или «Дверь» и протяните линию на плане. Выбор и перетаскивание меняют положение, синий маркер — размер. Delete удаляет выбранное; Esc отменяет размещение.</Typography.Paragraph>}
         </> : <div className="map-empty-state"><Empty description={building ? 'У здания пока нет планов этажей' : 'Добавьте первое здание, чтобы создать интерактивную карту'} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setMode(building ? 'floor' : 'building')}>{building ? 'Создать план этажа' : 'Добавить здание'}</Button></div>}
       </main>
-      {floor && inspectorOpen && <aside className="map-inspector-panel"><h4>На плане</h4><Inspector selected={selected} document={document} entities={entities}
+      {floor && inspectorOpen && <aside className="map-inspector-panel"><h4>На плане</h4>{network.inspector || <Inspector selected={selected} document={document} entities={entities}
         departments={departments.filter(department => !building?.branch_id || department.branch_id === building.branch_id)} editable={editing && !saving && !loading}
-        onChange={commit} onDelete={removeSelected} onOpen={(entity) => confirmDiscard(() => navigate(entity.path))} /></aside>}
+        onChange={commit} onDelete={removeSelected} onOpen={(entity) => confirmDiscard(() => navigate(entity.path))} />}</aside>}
     </div>
     <SettingsModal mode={mode} building={building} document={document} branches={branches} onClose={() => setMode(null)} onSaved={onManaged}
       onParameters={(values) => { commit({ ...document, ...values }); setMode(null) }} />
