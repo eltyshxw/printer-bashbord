@@ -512,7 +512,24 @@ class MapMarker(Base):
     x = Column(Float, nullable=False)
     y = Column(Float, nullable=False)
     rotation = Column(Float, nullable=False, default=0)
+    room_id = Column(String(80), nullable=True)
+    locked = Column(Boolean, nullable=False, default=False)
+    group_id = Column(String(80), nullable=True)
     floor = relationship("MapFloor")
+
+
+class MapFloorVersion(Base):
+    __tablename__ = "map_floor_versions"
+    __table_args__ = (UniqueConstraint("floor_id", "revision", name="uq_map_floor_version"),)
+
+    id = Column(Integer, primary_key=True)
+    floor_id = Column(Integer, ForeignKey("map_floors.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    saved_at = Column(DateTime(timezone=True), nullable=False)
+    saved_by = Column(String(255), nullable=True)
+    label = Column(String(200), nullable=True)
+    document_json = Column(Text, nullable=False)
+    background_filename = Column(String(100), nullable=True)
 
 
 Index(

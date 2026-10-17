@@ -21,6 +21,10 @@ def initialize_database():
     Base.metadata.create_all(bind=engine)
     # create_all does not add columns to existing installations.
     with engine.begin() as connection:
+        marker_columns = {column["name"] for column in inspect(connection).get_columns("map_markers")}
+        for name, sql_type in (("room_id", "VARCHAR(80)"), ("locked", "BOOLEAN NOT NULL DEFAULT 0"), ("group_id", "VARCHAR(80)")):
+            if name not in marker_columns:
+                connection.execute(text(f"ALTER TABLE map_markers ADD COLUMN {name} {sql_type}"))
         # Optional cartridge tracking fields preserve existing cycles as unknown.
         for table, additions in (
             ("cartridges", (("expected_return_date", "DATE"), ("installation_page_counter", "INTEGER"),
