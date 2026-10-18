@@ -11,7 +11,7 @@ const itemForKey = (document, key) => key?.startsWith('s:')
 export default function FloorPlanCanvas({ floorId, document, onChange, editing, saving, tool, onToolChange,
   selected, selection = [], onSelect, pendingEntity, onPlaced, entities, backgroundUrl, showGrid, gridStep, focus, onOpen,
   visibleTypes = ['workplace', 'device', 'warehouse_item', 'employee'], showLabels = true, highlightStatuses = false, wallSnap = false,
-  networkLayer, networkNodes = [], smartSnap = true, measurements = false, reference, onSelection }) {
+  networkLayer, networkNodes = [], smartSnap = true, measurements = false, showRoomDimensions = false, reference, onSelection }) {
   const svgRef = useRef(null)
   const gestureRef = useRef(null)
   const [gesture, setGesture] = useState(null)
@@ -73,8 +73,6 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
         matrix: svgRef.current.getScreenCTM().inverse() })
     } else if (tool === 'measure') {
       updateGesture({kind:'measure',start:world(event),end:world(event)})
-    } else if (editing && tool === 'marquee') {
-      updateGesture({kind:'marquee',start:world(event),end:world(event),additive:event.shiftKey})
     } else if (editing && pendingEntity) {
       const point = pointOnPlan(world(event), document, gridStep)
       onPlaced(pendingEntity, point)
@@ -93,10 +91,15 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
       const target = event.target.closest('[data-map-key]')
       const key = target?.getAttribute('data-map-key')
       const resizing=target?.hasAttribute('data-resize')
-      onSelect(key || null, { additive: editing && event.shiftKey && !resizing, keep: selection.includes(key) && !event.shiftKey })
       const item = itemForKey(document, key)
-      if (key && editing && (!event.shiftKey || resizing) && !item?.locked) updateGesture({ kind: resizing ? 'resize' : target.hasAttribute('data-end') ? 'end' : 'drag',
-        key, keys: selection.includes(key) ? selection : [key], start: world(event), end: world(event), item, handle:target.getAttribute('data-resize'),alt:event.altKey,shift:event.shiftKey })
+      // A room's empty interior can start a selection box; select the room first to move it.
+      if (editing && tool === 'select' && (!key || item?.kind === 'room' && !selection.includes(key))) {
+        updateGesture({kind:'marquee',start:world(event),end:world(event),additive:event.shiftKey,clickKey:key || null})
+      } else {
+        onSelect(key || null, { additive: editing && event.shiftKey && !resizing, keep: selection.includes(key) && !event.shiftKey })
+        if (key && editing && (!event.shiftKey || resizing) && !item?.locked) updateGesture({ kind: resizing ? 'resize' : target.hasAttribute('data-end') ? 'end' : 'drag',
+          key, keys: selection.includes(key) ? selection : [key], start: world(event), end: world(event), item, handle:target.getAttribute('data-resize'),alt:event.altKey,shift:event.shiftKey })
+      }
     }
     if (gestureRef.current) svgRef.current.setPointerCapture(event.pointerId)
   }
@@ -134,8 +137,12 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     if (!current) return
     if(current.kind === 'measure') setMeasurement({start:current.start,end:current.end})
     else if(current.kind === 'marquee') {
-      const keys=marqueeSelection(document,current.start,current.end)
-      onSelection?.(current.additive?[...new Set([...selection,...keys])]:keys)
+      if (Math.hypot(current.end.x-current.start.x,current.end.y-current.start.y) < screenUnit*4) {
+        if (current.clickKey || !current.additive) onSelect(current.clickKey,{additive:current.additive})
+      } else {
+        const keys=marqueeSelection(document,current.start,current.end)
+        onSelection?.(current.additive?[...new Set([...selection,...keys])]:keys)
+      }
     } else if (current.kind === 'draw') {
       const item = shapeFromDrag(current.tool, current.start, current.end, current.id)
       if (item) { onChange({ ...document, shapes: [...document.shapes, item] }); onSelect(`s:${item.id}`) }
@@ -172,7 +179,7 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
     if (shape.kind === 'room') content = <>
       <rect x={shape.x} y={shape.y} width={shape.width} height={shape.height} fill={shape.color} fillOpacity={0.7} stroke={stroke} strokeWidth={active ? 0.1 : 0.06} />
       {showLabels && <text x={shape.x + shape.width / 2} y={shape.y + Math.min(Math.max(0.65, screenUnit * 16), shape.height / 2)} textAnchor="middle" fontSize={Math.max(0.38, screenUnit * 12)} fill="#334155" pointerEvents="none">{shape.number && document.width / view.width < 1.5 ? `Каб. ${shape.number}` : roomTitle(shape)}</text>}
-      {(editing || measurements) && shape.width > 2 && shape.height > 1.5 && <text x={shape.x + shape.width / 2} y={shape.y + 1.1} textAnchor="middle" fontSize={Math.max(.27,screenUnit*11)} fill="#64748b" pointerEvents="none">{shape.width} × {shape.height} м · {round(shape.width*shape.height)} м²{shape.locked ? ' · 🔒' : ''}</text>}
+      {showRoomDimensions && shape.width > 2 && shape.height > 1.5 && <text data-room-dimensions={shape.id} x={shape.x + shape.width / 2} y={shape.y + 1.1} textAnchor="middle" fontSize={Math.max(.27,screenUnit*11)} fill="#64748b" pointerEvents="none">{shape.width} × {shape.height} м · {round(shape.width*shape.height)} м²{shape.locked ? ' · 🔒' : ''}</text>}
     </>
     else if (shape.kind === 'desk') content = <>
       <rect x={shape.x} y={shape.y} width={shape.width} height={shape.height} rx={0.1} fill={shape.color} stroke={stroke} strokeWidth={0.06} />
@@ -207,7 +214,7 @@ export default function FloorPlanCanvas({ floorId, document, onChange, editing, 
         <Button icon={<AimOutlined />} onClick={fit}>Весь план</Button>
         <Typography.Text type="secondary">{Math.round(document.width / view.width * 100)}%</Typography.Text>
       </Space>
-      <span>{document.width} × {document.height} м · {pendingEntity ? `Нажмите на план: ${pendingEntity.name}` : tool === 'pan' ? 'Перетащите план' : editing ? 'Колесо — масштаб, средняя кнопка — перемещение' : 'Выберите объект на карте'}</span>
+      <span>{document.width} × {document.height} м · {pendingEntity ? `Нажмите на план: ${pendingEntity.name}` : tool === 'pan' ? 'Перетащите план' : editing ? 'Тяните свободное место — рамка; средняя кнопка — перемещение' : 'Выберите объект на карте'}</span>
     </div>
     <svg ref={svgRef} role="application" aria-label="Интерактивный план этажа" tabIndex={0}
       className={`floor-plan-canvas floor-plan-tool-${pendingEntity ? 'place' : tool}`}

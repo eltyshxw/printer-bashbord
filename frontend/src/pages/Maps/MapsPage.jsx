@@ -168,6 +168,7 @@ export default function MapsPage() {
   const clipboard = useRef([])
   const [visibleTypes, setVisibleTypes] = useState(['workplace', 'employee', 'device', 'warehouse_item'])
   const [showLabels, setShowLabels] = useState(true)
+  const [showRoomDimensions,setShowRoomDimensions] = useState(false)
   const [highlightStatuses, setHighlightStatuses] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [inspectorOpen, setInspectorOpen] = useState(true)
@@ -685,16 +686,17 @@ export default function MapsPage() {
             <strong>Слои</strong><Checkbox.Group aria-label="Слои карты" value={visibleTypes} onChange={setVisibleTypes}
               options={['workplace', 'employee', 'device', 'warehouse_item'].map(value => ({ value, label: ENTITY_TYPES[value] }))} />
             <Checkbox checked={showLabels} onChange={event => setShowLabels(event.target.checked)}>Подписи</Checkbox>
+            <Checkbox checked={showRoomDimensions} onChange={event => setShowRoomDimensions(event.target.checked)}>Размеры кабинетов</Checkbox>
             <Checkbox checked={highlightStatuses} onChange={event => setHighlightStatuses(event.target.checked)}>Подсветка состояний</Checkbox>
           </div>
           {network.toolbar}
           {editing && <div className="map-drawing-toolbar">
-            <Space wrap size={4}>{Object.entries({...MAP_TOOLS,marquee:'Выделить рамкой',measure:'Измерить расстояние'}).map(([value, label]) => <Button key={value} disabled={saving} type={tool === value && !pendingEntity ? 'primary' : 'default'} onClick={() => changeTool(value)}>{label}</Button>)}
+            <Space wrap size={4}>{Object.entries({...MAP_TOOLS,measure:'Измерить расстояние'}).map(([value, label]) => <Button key={value} disabled={saving} type={tool === value && !pendingEntity ? 'primary' : 'default'} onClick={() => changeTool(value)}>{label}</Button>)}
               <Tooltip title="Отменить (Ctrl+Z)"><Button aria-label="Отменить изменение плана" icon={<UndoOutlined />} disabled={!state.past.length || saving} onClick={() => dispatch({ type: 'undo' })} /></Tooltip>
               <Tooltip title="Повторить (Ctrl+Shift+Z)"><Button aria-label="Повторить изменение плана" icon={<RedoOutlined />} disabled={!state.future.length || saving} onClick={() => dispatch({ type: 'redo' })} /></Tooltip>
             </Space>
             <Space wrap size={4}>
-              <Typography.Text type="secondary">Выделено: {selection.length} · Shift + щелчок — несколько</Typography.Text>
+              <Typography.Text type="secondary">Выделено: {selection.length} · Тяните свободное место для рамки · Shift — добавить к выделению</Typography.Text>
               <Tooltip title="Копируются кабинеты, столы и элементы рисунка. Оборудование и рабочие места добавляются из списка."><Button size="small" icon={<CopyOutlined />} disabled={saving || !selection.length} onClick={() => { clipboard.current = copySelection(document, selection); paste() }}>Дублировать</Button></Tooltip>
               <Button size="small" disabled={saving || selection.length < 2} onClick={() => commit(groupSelection(document, selection, newShapeId()))}>Группировать</Button>
               <Button size="small" disabled={saving || !selection.length} onClick={() => commit(groupSelection(document, expandedSelection(document, selection), null))}>Разгруппировать</Button>
@@ -727,7 +729,7 @@ export default function MapsPage() {
               selected={selected} selection={selection} onSelect={setSelected} pendingEntity={pendingEntity} onPlaced={placeEntity} entities={entities}
               backgroundUrl={previewBackground || serverBackground} showGrid={showGrid} gridStep={gridStep} focus={focus}
               visibleTypes={visibleTypes} showLabels={showLabels} highlightStatuses={highlightStatuses} wallSnap={wallSnap}
-              networkLayer={network.overlay} networkNodes={network.nodes} smartSnap={smartSnap} measurements={measurements} reference={selection.includes(reference)?reference:selected}
+              networkLayer={network.overlay} networkNodes={network.nodes} smartSnap={smartSnap} measurements={measurements} showRoomDimensions={showRoomDimensions} reference={selection.includes(reference)?reference:selected}
               onSelection={keys=>{network.clearSelection();setSelection(keys);setPrimarySelected(keys.at(-1)||null);if(keys.length)setInspectorOpen(true)}}
               onOpen={(entity) => { if (entity?.path) confirmDiscard(() => navigate(entity.path)) }} />
           </Spin>

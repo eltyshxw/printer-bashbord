@@ -14,7 +14,7 @@ export default function MapEditingTools({document,selection,selected,disabled,on
   return <>
     <Space wrap className="map-editing-tools">
       <Checkbox checked={guides} onChange={event=>onGuides(event.target.checked)}>Умные направляющие (Alt — без привязки)</Checkbox>
-      <Checkbox checked={measurements} onChange={event=>onMeasurements(event.target.checked)}>Размеры и отступы до стен</Checkbox>
+      <Checkbox checked={measurements} onChange={event=>onMeasurements(event.target.checked)}>Линейки и отступы до стен</Checkbox>
       <Select aria-label="Опорный объект" placeholder="Опорный объект" value={anchor} onChange={onReference} options={options} style={{minWidth:175}} disabled={disabled||!selection.length} />
       <Select aria-label="Выравнивание по опорному объекту" placeholder="Выровнять по опорному" value={undefined} disabled={disabled||selection.length<2} style={{minWidth:200}} options={Object.entries({left:'По левому краю',cx:'По центру горизонтали',right:'По правому краю',top:'По верхнему краю',cy:'По центру вертикали',bottom:'По нижнему краю'}).map(([value,label])=>({value,label}))} onChange={edge=>apply(alignToReference(document,selection,anchor,edge))} />
       <InputNumber aria-label="Промежуток между объектами" min={0} max={500} step={.1} value={gap} placeholder="Авто, м" onChange={setGap} style={{width:115}} />

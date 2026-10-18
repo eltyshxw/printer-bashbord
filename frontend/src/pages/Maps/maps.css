@@ -102,6 +102,5 @@
 .network-inspector-ports { max-height:220px; overflow:auto; margin-bottom:12px; }
 .network-inspector-ports > div { padding:3px 0; }
 .map-template-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
-.floor-plan-tool-marquee { cursor:crosshair; }
 .floor-plan-tool-measure { cursor:crosshair; }
 @media(max-width:600px) { .network-form-grid { grid-template-columns:1fr; } }
