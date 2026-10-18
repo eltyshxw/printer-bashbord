@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {'.git', '.cache', '.snapshots', '.venv', 'venv', 'env', 'node_modules',
              'dist', 'build', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache',
-             '.vscode', '.idea', '.aws', '.codex', 'equipment_photos'}
+             '.vscode', '.idea', '.aws', '.codex', 'equipment_photos', 'repair_invoices', 'data'}
 
 
 def create_checkpoint(label='checkpoint'):
@@ -32,9 +32,9 @@ def create_checkpoint(label='checkpoint'):
                 relative = path.relative_to(ROOT).as_posix()
                 if path.is_symlink() or (name.startswith('.env') and name != '.env.example'):
                     continue
-                if relative == 'tools/ocs_ad/config.json' or path.suffix in {'.pyc', '.pyo', '.log', '.tmp', '.bak'}:
+                if relative in {'tools/ocs_ad/config.json', 'backend/inventory_numbers_keep.json'} or path.suffix in {'.pyc', '.pyo', '.log', '.tmp', '.bak', '.pem', '.key', '.p12', '.pfx'}:
                     continue
-                if name.endswith(('.db', '.db-journal', '.db-wal', '.db-shm')) and relative != 'demo/printer_dashboard.db':
+                if re.search(r'\.(db|sqlite|sqlite3)(-(journal|wal|shm))?$', name):
                     continue
                 archive.write(path, relative)
     source = ROOT / '.cache/demo/printer_dashboard.db'

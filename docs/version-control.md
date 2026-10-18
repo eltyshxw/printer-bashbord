@@ -36,7 +36,7 @@ $projectGit = '.\.cache\runtime\git\cmd\git.exe'
 
 В `.snapshots/<дата-время>-before-next-change` появятся:
 
-- `source.zip` — исходники, включая готовую синтетическую демобазу;
+- `source.zip` — исходники без баз данных и локальных конфигураций;
 - `demo-runtime.db` — согласованная резервная копия текущей локальной демобазы,
   полученная через SQLite Backup API и проверенная `integrity_check`;
 - `demo-files.zip` — локальные фотографии, подложки карт и PDF-счета демостенда;

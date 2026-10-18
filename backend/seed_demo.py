@@ -17,7 +17,7 @@ from uuid import uuid4
 
 
 SEED_VERSION = "1"
-DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "demo" / "printer_dashboard.db"
+DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / ".cache" / "demo" / "printer_dashboard.db"
 
 
 def demo_info(path: Path) -> dict:

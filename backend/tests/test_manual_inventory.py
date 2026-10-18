@@ -198,7 +198,7 @@ class InventoryCleanupTests(unittest.TestCase):
         self.base = Path(self.directory.name)
         self.filename = self.base / "test.db"
         self.root = self.base / "photos"
-        self.keep = json.loads((BACKEND / "inventory_numbers_keep.json").read_text(encoding="utf-8"))
+        self.keep = json.loads((BACKEND / "inventory_numbers_keep.example.json").read_text(encoding="utf-8"))
         engine = create_engine("sqlite:///" + str(self.filename))
         Base.metadata.create_all(engine)
         with sessionmaker(bind=engine)() as db:
@@ -219,14 +219,14 @@ class InventoryCleanupTests(unittest.TestCase):
             album.mkdir(parents=True)
             (album / (number + "_0001.png")).write_bytes(PNG)
 
-    def test_preview_is_read_only_apply_keeps_eleven_cards_and_preserves_links_and_photos(self):
+    def test_preview_is_read_only_apply_keeps_verified_cards_and_preserves_links_and_photos(self):
         preview = run(self.filename, self.root, self.keep, self.base / "preview")
-        self.assertEqual(preview["totals"], {"retained": 11, "cleared": 2, "photo_albums_moved": 2})
+        self.assertEqual(preview["totals"], {"retained": len(self.keep), "cleared": 2, "photo_albums_moved": 2})
         self.assertTrue((self.root / "1-00888").exists())
         applied = run(self.filename, self.root, self.keep, self.base / "apply", apply=True)
         self.assertEqual(applied["status"], "applied")
         with closing(sqlite3.connect(self.filename)) as db, db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM warehouse_items WHERE inventory_number IS NOT NULL").fetchone()[0], 11)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM warehouse_items WHERE inventory_number IS NOT NULL").fetchone()[0], len(self.keep))
             self.assertIsNone(db.execute("SELECT inventory_number FROM devices").fetchone()[0])
             self.assertEqual(db.execute("SELECT inventory_number FROM workplace_asset_assignments").fetchone()[0], "1-00888")
             self.assertEqual(db.execute("SELECT item_id FROM ocs_asset_links").fetchone()[0], self.item_id)

@@ -13,6 +13,6 @@
   `.cache/runtime/git/cmd/git.exe`; use installed Git when available elsewhere.
   The portable Python executable is `.cache/runtime/python/python.exe`.
 - Keep runtime databases, uploads, secrets, dependencies and `.snapshots` out of
-  commits. `demo/printer_dashboard.db` is the deliberately tracked synthetic fixture.
-- Use the isolated demo for development. Do not change the server at
-  `192.168.0.103` as part of local work unless requested.
+  commits. Generate optional demo data locally; do not track database snapshots.
+- Use the isolated demo for development. Do not change external servers as part
+  of local work unless requested.

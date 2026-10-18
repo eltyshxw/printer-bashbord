@@ -166,7 +166,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, default=Path("/app/data/printer_dashboard.db"))
     parser.add_argument("--photos-root", type=Path, default=PHOTO_ROOT)
-    parser.add_argument("--keep", type=Path, default=Path(__file__).with_name("inventory_numbers_keep.json"))
+    parser.add_argument("--keep", type=Path, required=True, help="Explicit path to your verified physical-label list")
     parser.add_argument("--output-dir", type=Path, default=Path("/app/data/inventory-reset"))
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()

@@ -78,12 +78,26 @@ Thumbs.db
 *.backup
 *~
 
-# Runtime SQLite files; keep only the deliberately prepared demo snapshot.
+# Runtime databases, including optional demo data.
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-!demo/printer_dashboard.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.sqlite-wal
+*.sqlite3-wal
+*.sqlite-shm
+*.sqlite3-shm
+repair_invoices/
+data/
+backend/inventory_numbers_keep.json
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Local OCS/AD collector configuration and reports
 tools/ocs_ad/config.json
